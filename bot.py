@@ -228,6 +228,8 @@ def send_admin_dashboard(chat_id, message_id=None):
 admin_states = {}
 
 # ─── বটের মূল মেসেজ হ্যান্ডলারসমূহ ───
+
+# ১. স্টার্ট কমান্ড
 @bot.message_handler(commands=['start'])
 def start_bot(message):
     save_user(message.chat.id)
@@ -240,132 +242,19 @@ def start_bot(message):
         else: 
             send_join_request(message.chat.id)
 
-# ইউজার কিবোর্ড বাটন কন্ট্রোল 
-@bot.message_handler(func=lambda message: True)
-def handle_text_buttons(message):
-    if not is_subscribed(message.chat.id):
-        send_join_request(message.chat.id)
-        return
+# ২. গ্লোবাল নোটিশ কমান্ড
+@bot.message_handler(commands=['notice'])
+def send_notice(message):
+    if message.chat.id == ADMIN_ID:
+        notice_text = message.text.replace("/notice", "").strip()
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "r") as f:
+                for user in f.read().splitlines():
+                    try: bot.send_message(int(user), f"📢 **নোটিশ:**\n\n{notice_text}")
+                    except: pass
+            bot.reply_to(message, "✅ সফলভাবে নোটিশ পাঠানো হয়েছে।")
 
-    if message.text == "📞 Get Number":
-        send_services_menu(message.chat.id)
-    elif message.text == "📊 Active Traffic":
-        bot.send_message(message.chat.id, "📊 **Active Traffic:**\n\nবর্তমানে ওটিপি সার্ভারে ট্রাফিক ১০০% সচল ও হাই স্পিড আছে।")
-    elif message.text == "🌍 Available Countries":
-        bot.send_message(message.chat.id, "🌍 **বর্তমানে সচল দেশসমূহ:**\n\nUS, GB, CA, FR, DE, MM, VE (প্যানেল অনুযায়ী)")
-    elif message.text == "🔐 2FA GENERATE":
-        bot.send_message(message.chat.id, "🔐 **2FA Generator:**\n\nসুরক্ষার জন্য এই ফিচারটি খুব শীঘ্রই লাইভ করা হবে।")
-
-# মেম্বারশিপ চেক কলব্যাক
-@bot.callback_query_handler(func=lambda call: call.data == "check_membership")
-def check_membership(call):
-    if is_subscribed(call.from_user.id):
-        try: bot.delete_message(call.message.chat.id, call.message.message_id)
-        except: pass
-        send_home_keyboard(call.message.chat.id, "✅ ভেরিফিকেশন সফল হয়েছে!")
-    else:
-        bot.answer_callback_query(call.id, text="❌ আপনি এখনো জয়েন করেননি!", show_alert=True)
-
-# ব্যাক বোতাম অ্যাকশন
-@bot.callback_query_handler(func=lambda call: call.data == "back_main")
-def back_to_main(call):
-    send_services_menu(call.message.chat.id, call.message.message_id)
-
-# অ্যাপ সিলেক্ট করার পর দেশের মেনু (আপনার অরিজিনাল ডিজাইন)
-@bot.callback_query_handler(func=lambda call: call.data.startswith("app_"))
-def get_countries_for_app(call):
-    selected_app = call.data.split("_")[1]
-    markup = InlineKeyboardMarkup()
-    
-    markup.row(InlineKeyboardButton("🇺🇸 United States", callback_data=f"c_US_{selected_app}"), InlineKeyboardButton("🇬🇧 United Kingdom", callback_data=f"c_GB_{selected_app}"))
-    markup.row(InlineKeyboardButton("🇨🇦 Canada", callback_data=f"c_CA_{selected_app}"), InlineKeyboardButton("🇫🇷 France", callback_data=f"c_FR_{selected_app}"))
-    markup.row(InlineKeyboardButton("🇲🇳 Myanmar", callback_data=f"c_MM_{selected_app}"), InlineKeyboardButton("🇻🇪 Venezuela", callback_data=f"c_VE_{selected_app}"))
-    
-    markup.add(InlineKeyboardButton("⬅️ Back", callback_data="back_main"))
-    text = f"📱 Service: **{selected_app.capitalize()}**\n🌍 **Select Country:**"
-    try: bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text, reply_markup=markup, parse_mode="Markdown")
-    except: bot.send_message(call.message.chat.id, text, reply_markup=markup)
-
-# দেশ সিলেক্ট করার পর নম্বর ইন্টারফেস (আপনার অরিজিনাল ডিজাইন + IVASMS স্ক্রাপার)
-@bot.callback_query_handler(func=lambda call: call.data.startswith("c_") or call.data.startswith("change_"))
-def show_number_interface(call):
-    data_parts = call.data.split("_")
-    country_code = data_parts[1].upper()
-    selected_app = data_parts[2]
-    
-    if not get_setting("number_url") or not get_setting("sms_url"):
-        bot.answer_callback_query(call.id, text="⚠️ বটটি কনফিগার করা নেই। অ্যাডমিন এখনো লিংক সেটআপ করেনি।", show_alert=True)
-        return
-        
-    login_ivasms() # সেশন জেনারেট/রিলগইন
-    fetched_num = fetch_ivasms_number()
-    
-    # প্যানেল খালি থাকলে ক্র্যাশ এড়াতে ফলব্যাক ডামি জেনারেশন
-    if not fetched_num:
-        rand_suffix = str(random.randint(100000, 999999))
-        fetched_num = f"8801712{rand_suffix}"
-
-    msg_text = f"🌍Country ➤ {country_code}\n\n" \
-               f"📞Number: `+{fetched_num}`\n\n" \
-               f"⏳Status: Waiting For OTP\n" \
-               f"⏰Number Validity ➤ 10 minutes\n" \
-               f"🔷 ওটিপি পেতে নিচের '📥 Fetch Code' বাটনে ক্লিক করুন অথবা অটোমেটিক ওটিপির জন্য ১০ সেকেন্ড ওয়েট করুন।😊"
-    
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🔄 Change Number", callback_data=f"change_{country_code.lower()}_{selected_app}"))
-    markup.row(
-        InlineKeyboardButton("📢 OTP Channel", url=get_setting("channel_link")),
-        InlineKeyboardButton("💬 OTP Group", url=get_setting("group_link"))
-    )
-    clean_phone = fetched_num.replace('+', '').replace(' ', '')
-    markup.row(InlineKeyboardButton("📥 Fetch Code", callback_data=f"fetch_{clean_phone}_{selected_app}"))
-    
-    try: bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=msg_text, reply_markup=markup, parse_mode="Markdown")
-    except: bot.send_message(call.message.chat.id, msg_text, reply_markup=markup, parse_mode="Markdown")
-    
-    # 🚀 অটোমেটিক ১০ সেকেন্ডের ব্যাকগ্রাউন্ড ফেচ থ্রেড চালু
-    Thread(target=auto_fetch_ivasms_otp, args=(call.message.chat.id, clean_phone, selected_app, False)).start()
-
-# ম্যানুয়াল ক্লিক করলে ওটিপি ট্রিগার 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("fetch_"))
-def manual_fetch_trigger(call):
-    data_parts = call.data.split("_")
-    phone = data_parts[1]
-    selected_app = data_parts[2]
-    
-    bot.answer_callback_query(call.id, text="🔍 ওটিপি কোড খোঁজা হচ্ছে...", show_alert=False)
-    # ম্যানুয়াল ফেচ ট্রাই (কোনো ওয়েটিং ছাড়া সাথে সাথে চেক করবে)
-    auto_fetch_ivasms_otp(call.message.chat.id, phone, selected_app, manual=True)
-
-# ─── অ্যাডমিন ড্যাশবোর্ড ইনলাইন বাটন অ্যাকশন হ্যান্ডলার ───
-@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_") and call.from_user.id == ADMIN_ID)
-def handle_admin_callbacks(call):
-    action = call.data
-    if action == "adm_refresh":
-        send_admin_dashboard(call.message.chat.id, call.message.message_id)
-        bot.answer_callback_query(call.id, text="🔄 ড্যাশবোর্ড আপডেট করা হয়েছে!")
-    elif action == "adm_login":
-        bot.send_message(call.message.chat.id, "📧 আপনার IVASMS ইমেইলটি টাইপ করে পাঠান:")
-        admin_states[call.message.chat.id] = {"step": "email", "msg_id": call.message.message_id}
-        bot.answer_callback_query(call.id)
-    elif action == "adm_num_url":
-        bot.send_message(call.message.chat.id, "📂 **ধাপ ১:** সাইডবার মেনু থেকে My Numbers পেজের পুরো লিংকটি কপি করে পেস্ট করুন:")
-        admin_states[call.message.chat.id] = {"step": "num_url", "msg_id": call.message.message_id}
-        bot.answer_callback_query(call.id)
-    elif action == "adm_sms_url":
-        bot.send_message(call.message.chat.id, "💬 **ধাপ ২:** এবার Client Active SMS পেজের লিংকটি পেস্ট করুন:")
-        admin_states[call.message.chat.id] = {"step": "sms_url", "msg_id": call.message.message_id}
-        bot.answer_callback_query(call.id)
-    elif action == "adm_channel":
-        bot.send_message(call.message.chat.id, "📢 নতুন **Channel ID** দিন (যেমন: -1003956226642):")
-        admin_states[call.message.chat.id] = {"step": "c_id", "msg_id": call.message.message_id}
-        bot.answer_callback_query(call.id)
-    elif action == "adm_group":
-        bot.send_message(call.message.chat.id, "💬 নতুন **Group ID** দিন (যেমন: -1004309875319):")
-        admin_states[call.message.chat.id] = {"step": "g_id", "msg_id": call.message.message_id}
-        bot.answer_callback_query(call.id)
-
-# অ্যাডমিন ইনপুট প্রসেসর স্টেট মেশিন 
+# ৩. অ্যাডমিন ইনপুট প্রসেসর স্টেট মেশিন (এটি অবশ্যই টেক্সট বাটনের ওপরে থাকতে হবে)
 @bot.message_handler(func=lambda msg: msg.chat.id in admin_states and msg.chat.id == ADMIN_ID)
 def handle_admin_steps(message):
     state_data = admin_states[message.chat.id]
@@ -417,20 +306,134 @@ def handle_admin_steps(message):
         send_admin_dashboard(message.chat.id)
         del admin_states[message.chat.id]
 
-# গ্লোবাল নোটিশ কমান্ড
-@bot.message_handler(commands=['notice'])
-def send_notice(message):
-    if message.chat.id == ADMIN_ID:
-        notice_text = message.text.replace("/notice", "").strip()
-        if os.path.exists(USERS_FILE):
-            with open(USERS_FILE, "r") as f:
-                for user in f.read().splitlines():
-                    try: bot.send_message(int(user), f"📢 **নোটিশ:**\n\n{notice_text}")
-                    except: pass
-            bot.reply_to(message, "✅ সফলভাবে নোটিশ পাঠানো হয়েছে।")
+# ৪. ইউজার কিবোর্ড বাটন কন্ট্রোল (ক্যাচ-অল হ্যান্ডলার নিচে রাখা হলো)
+@bot.message_handler(func=lambda message: True)
+def handle_text_buttons(message):
+    if not is_subscribed(message.chat.id):
+        send_join_request(message.chat.id)
+        return
+
+    if message.text == "📞 Get Number":
+        send_services_menu(message.chat.id)
+    elif message.text == "📊 Active Traffic":
+        bot.send_message(message.chat.id, "📊 **Active Traffic:**\n\nবর্তমানে ওটিপি সার্ভারে ট্রাফিক ১০০% সচল ও হাই স্পিড আছে।")
+    elif message.text == "🌍 Available Countries":
+        bot.send_message(message.chat.id, "🌍 **বর্তমানে সচল দেশসমূহ:**\n\nUS, GB, CA, FR, DE, MM, VE (প্যানেল অনুযায়ী)")
+    elif message.text == "🔐 2FA GENERATE":
+        bot.send_message(message.chat.id, "🔐 **2FA Generator:**\n\nসুরক্ষার জন্য এই ফিচারটি খুব শীঘ্রই লাইভ করা হবে।")
+
+# ─── কলব্যাক কোয়েরি হ্যান্ডলারসমূহ ───
+
+# মেম্বারশিপ চেক কলব্যাক
+@bot.callback_query_handler(func=lambda call: call.data == "check_membership")
+def check_membership(call):
+    if is_subscribed(call.from_user.id):
+        try: bot.delete_message(call.message.chat.id, call.message.message_id)
+        except: pass
+        send_home_keyboard(call.message.chat.id, "✅ ভেরিফিকেশন সফল হয়েছে!")
+    else:
+        bot.answer_callback_query(call.id, text="❌ আপনি এখনো জয়েন করেননি!", show_alert=True)
+
+# ব্যাক বোতাম অ্যাকশন
+@bot.callback_query_handler(func=lambda call: call.data == "back_main")
+def back_to_main(call):
+    send_services_menu(call.message.chat.id, call.message.message_id)
+
+# অ্যাপ সিলেক্ট করার পর দেশের মেনু
+@bot.callback_query_handler(func=lambda call: call.data.startswith("app_"))
+def get_countries_for_app(call):
+    selected_app = call.data.split("_")[1]
+    markup = InlineKeyboardMarkup()
+    
+    markup.row(InlineKeyboardButton("🇺🇸 United States", callback_data=f"c_US_{selected_app}"), InlineKeyboardButton("🇬🇧 United Kingdom", callback_data=f"c_GB_{selected_app}"))
+    markup.row(InlineKeyboardButton("🇨🇦 Canada", callback_data=f"c_CA_{selected_app}"), InlineKeyboardButton("🇫🇷 France", callback_data=f"c_FR_{selected_app}"))
+    markup.row(InlineKeyboardButton("🇲🇳 Myanmar", callback_data=f"c_MM_{selected_app}"), InlineKeyboardButton("🇻🇪 Venezuela", callback_data=f"c_VE_{selected_app}"))
+    
+    markup.add(InlineKeyboardButton("⬅️ Back", callback_data="back_main"))
+    text = f"📱 Service: **{selected_app.capitalize()}**\n🌍 **Select Country:**"
+    try: bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text, reply_markup=markup, parse_mode="Markdown")
+    except: bot.send_message(call.message.chat.id, text, reply_markup=markup)
+
+# দেশ সিলেক্ট করার পর নম্বর ইন্টারফেস
+@bot.callback_query_handler(func=lambda call: call.data.startswith("c_") or call.data.startswith("change_"))
+def show_number_interface(call):
+    data_parts = call.data.split("_")
+    country_code = data_parts[1].upper()
+    selected_app = data_parts[2]
+    
+    if not get_setting("number_url") or not get_setting("sms_url"):
+        bot.answer_callback_query(call.id, text="⚠️ বটটি কনফিগার করা নেই। অ্যাডমিন এখনো লিংক সেটআপ করেনি।", show_alert=True)
+        return
+        
+    login_ivasms() # সেশন জেনারেট/রিলগইন
+    fetched_num = fetch_ivasms_number()
+    
+    # প্যানেল খালি থাকলে ক্র্যাশ এড়াতে ফলব্যাক ডামি জেনারেশন
+    if not fetched_num:
+        rand_suffix = str(random.randint(100000, 999999))
+        fetched_num = f"8801712{rand_suffix}"
+
+    msg_text = f"🌍Country ➤ {country_code}\n\n" \
+               f"📞Number: `+{fetched_num}`\n\n" \
+               f"⏳Status: Waiting For OTP\n" \
+               f"⏰Number Validity ➤ 10 minutes\n" \
+               f"🔷 ওটিপি পেতে নিচের '📥 Fetch Code' বাটনে ক্লিক করুন অথবা অটোমেটিক ওটিপির জন্য ১০ সেকেন্ড ওয়েট করুন।😊"
+    
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("🔄 Change Number", callback_data=f"change_{country_code.lower()}_{selected_app}"))
+    markup.row(
+        InlineKeyboardButton("📢 OTP Channel", url=get_setting("channel_link")),
+        InlineKeyboardButton("💬 OTP Group", url=get_setting("group_link"))
+    )
+    clean_phone = fetched_num.replace('+', '').replace(' ', '')
+    markup.row(InlineKeyboardButton("📥 Fetch Code", callback_data=f"fetch_{clean_phone}_{selected_app}"))
+    
+    try: bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=msg_text, reply_markup=markup, parse_mode="Markdown")
+    except: bot.send_message(call.message.chat.id, msg_text, reply_markup=markup, parse_mode="Markdown")
+    
+    # ব্যাকগ্রাউন্ড ফেচ থ্রেড চালু
+    Thread(target=auto_fetch_ivasms_otp, args=(call.message.chat.id, clean_phone, selected_app, False)).start()
+
+# ম্যানুয়াল ক্লিক করলে ওটিপি ট্রিগার 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("fetch_"))
+def manual_fetch_trigger(call):
+    data_parts = call.data.split("_")
+    phone = data_parts[1]
+    selected_app = data_parts[2]
+    
+    bot.answer_callback_query(call.id, text="🔍 ওটিপি কোড খোঁজা হচ্ছে...", show_alert=False)
+    auto_fetch_ivasms_otp(call.message.chat.id, phone, selected_app, manual=True)
+
+# অ্যাডমিন ড্যাশবোর্ড ইনলাইন বাটন অ্যাকশন হ্যান্ডলার 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("adm_") and call.from_user.id == ADMIN_ID)
+def handle_admin_callbacks(call):
+    action = call.data
+    if action == "adm_refresh":
+        send_admin_dashboard(call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id, text="🔄 ড্যাশবোর্ড আপডেট করা হয়েছে!")
+    elif action == "adm_login":
+        bot.send_message(call.message.chat.id, "📧 আপনার IVASMS ইমেইলটি টাইপ করে পাঠান:")
+        admin_states[call.message.chat.id] = {"step": "email", "msg_id": call.message.message_id}
+        bot.answer_callback_query(call.id)
+    elif action == "adm_num_url":
+        bot.send_message(call.message.chat.id, "📂 **ধাপ ১:** সাইডবার মেনু থেকে My Numbers পেজের পুরো লিংকটি কপি করে পেস্ট করুন:")
+        admin_states[call.message.chat.id] = {"step": "num_url", "msg_id": call.message.message_id}
+        bot.answer_callback_query(call.id)
+    elif action == "adm_sms_url":
+        bot.send_message(call.message.chat.id, "💬 **ধাপ ২:** এবার Client Active SMS পেজের লিংকটি পেস্ট করুন:")
+        admin_states[call.message.chat.id] = {"step": "sms_url", "msg_id": call.message.message_id}
+        bot.answer_callback_query(call.id)
+    elif action == "adm_channel":
+        bot.send_message(call.message.chat.id, "📢 নতুন **Channel ID** দিন (যেমন: -1003956226642):")
+        admin_states[call.message.chat.id] = {"step": "c_id", "msg_id": call.message.message_id}
+        bot.answer_callback_query(call.id)
+    elif action == "adm_group":
+        bot.send_message(call.message.chat.id, "💬 নতুন **Group ID** দিন (যেমন: -1004309875319):")
+        admin_states[call.message.chat.id] = {"step": "g_id", "msg_id": call.message.message_id}
+        bot.answer_callback_query(call.id)
 
 if __name__ == "__main__":
     keep_alive()
-    print("🚀 প্রফেশনাল ওটিপি বট (অরিজিনাল লেআউট + ড্যাশবোর্ড) সফলভাবে লাইভ হয়েছে...")
+    print("🚀 প্রফেশনাল ওটিপি বট সফলভাবে লাইভ হয়েছে...")
     try: bot.polling(none_stop=True, interval=0, timeout=20)
     except Exception as e: print(f"বট রানিংয়ে সমস্যা: {e}")
