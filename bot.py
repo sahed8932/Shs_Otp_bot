@@ -4,6 +4,7 @@ import os
 import time
 import random
 import sqlite3
+import hashlib
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from flask import Flask
 from threading import Thread
@@ -29,7 +30,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "বট সচল আছে!"
+    return "বট সচল আছে এবং ব্যাকগ্রাউন্ডে ওটিপি ফরোয়ার্ড করছে!"
 
 def run():
     port = int(os.environ.get("PORT", 8080))
@@ -43,18 +44,28 @@ def keep_alive():
 def init_db():
     conn = sqlite3.connect("bot_settings.db")
     cursor = conn.cursor()
+    
+    # কনফিগারেশন টেবিল
     cursor.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)''')
     
+    # প্রসেসড লাইভ ওটিপি ট্র্যাক করার টেবিল (ডুপ্লিকেট মেসেজ রোধ করার জন্য)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS processed_sms (sms_hash TEXT PRIMARY KEY)''')
+    
+    # ডাইনামিক ফোর্স সাবস্ক্রিপশন চ্যানেল লিস্ট
+    cursor.execute('''CREATE TABLE IF NOT EXISTS fsub_channels (chat_id TEXT PRIMARY KEY, link TEXT)''')
+    
+    # ডিফল্ট সেটিংস (আপনার দেয়া নতুন পোর্টাল লিংকগুলো সহ)
     defaults = {
         "channel_id": "-1003956226642",
         "group_id": "-1004309875319",
         "channel_link": "https://t.me/SHS_Otp_Channel",
         "group_link": "https://t.me/+DXdDIm7-rRU4YTQ1",
-        "number_url": "",
-        "sms_url": "",
-        "ivasms_email": "",
-        "ivasms_password": "",
-        "ivasms_cookie": ""  # ম্যানুয়াল কুকির জন্য নতুন ডাটাবেস ফিল্ড
+        "number_url": "https://www.ivasms.com/portal/numbers/test",
+        "sms_url": "https://www.ivasms.com/portal/live/my_sms",
+        "ivasms_email": "bdyasmin0@gmail.com",
+        "ivasms_password": "1Xsahed@",
+        "ivasms_cookie": "",
+        "live_forward_enabled": "1"  # লাইভ ওটিপি গ্রুপে অটো ফরোয়ার্ডিং সচল
     }
     for key, val in defaults.items():
         cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (key, val))
@@ -79,7 +90,60 @@ def set_setting(key, value):
     conn.commit()
     conn.close()
 
-# ─── কোর সাবস্ক্রিপশন ফাংশনসমূহ ───
+# ─── ডাইনামিক ফোর্স সাবস্ক্রিপশন ফাংশনসমূহ ───
+def get_fsub_channels():
+    conn = sqlite3.connect("bot_settings.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT chat_id, link FROM fsub_channels")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def add_fsub_channel(chat_id, link):
+    conn = sqlite3.connect("bot_settings.db")
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO fsub_channels (chat_id, link) VALUES (?, ?)", (chat_id, link))
+    conn.commit()
+    conn.close()
+
+def delete_fsub_channel(chat_id):
+    conn = sqlite3.connect("bot_settings.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM fsub_channels WHERE chat_id=?", (chat_id,))
+    conn.commit()
+    conn.close()
+
+def check_all_subscriptions(user_id):
+    # অ্যাডমিনের জন্য সাবস্ক্রিপশন চেক করার দরকার নেই
+    if user_id == ADMIN_ID:
+        return True
+    
+    channels = get_fsub_channels()
+    if not channels:
+        return True  # কোনো ফোর্স সাবস্ক্রিপশন চ্যানেল অ্যাড করা না থাকলে সরাসরি অ্যাপ্রুভড
+        
+    for c_id, _ in channels:
+        try:
+            status = bot.get_chat_member(int(c_id), user_id).status
+            if status in ['left', 'kicked']:
+                return False
+        except Exception as e:
+            print(f"চ্যানেল সাবস্ক্রিপশন চেক এরর: {e}")
+            return False
+    return True
+
+def send_join_request(chat_id):
+    channels = get_fsub_channels()
+    markup = InlineKeyboardMarkup()
+    
+    # ডাইনামিক জয়েনিং বাটন জেনারেট
+    for i, (c_id, link) in enumerate(channels, 1):
+        markup.row(InlineKeyboardButton(f"📢 Join OTP Channel {i}", url=link))
+        
+    markup.row(InlineKeyboardButton("✅ Joined", callback_data="check_membership"))
+    bot.send_message(chat_id, "⚠️ সার্ভিসটি ব্যবহার করতে প্রথমে আমাদের ওটিপি চ্যানেল এবং গ্রুপগুলোতে জয়েন করুন। তারপর '✅ Joined' বাটনে ক্লিক করুন।", reply_markup=markup)
+
+# ─── কোর সাবস্ক্রিপশন ও উইজার ইন্টারফেস ফাংশনসমূহ ───
 def save_user(user_id):
     if not os.path.exists(USERS_FILE):
         with open(USERS_FILE, "w") as f:
@@ -90,23 +154,6 @@ def save_user(user_id):
         if str(user_id) not in users:
             with open(USERS_FILE, "a") as f:
                 f.write(f"{user_id}\n")
-
-def is_subscribed(user_id):
-    try:
-        c_id = int(get_setting("channel_id"))
-        g_id = int(get_setting("group_id"))
-        channel_status = bot.get_chat_member(c_id, user_id).status
-        group_status = bot.get_chat_member(g_id, user_id).status
-        return channel_status not in ['left', 'kicked'] and group_status not in ['left', 'kicked']
-    except:
-        return True
-
-def send_join_request(chat_id):
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("📢 Join OTP Channel", url=get_setting("channel_link")))
-    markup.row(InlineKeyboardButton("💬 Join OTP Group", url=get_setting("group_link")))
-    markup.row(InlineKeyboardButton("✅ Joined", callback_data="check_membership"))
-    bot.send_message(chat_id, "⚠️ সার্ভিসটি ব্যবহার করতে প্রথমে আমাদের ওটিপি চ্যানেল এবং গ্রুপে জয়েন করুন। তারপর '✅ Joined' বাটনে ক্লিক করুন।", reply_markup=markup)
 
 def send_home_keyboard(chat_id, text="👋 ওটিপি ড্যাশবোর্ডে স্বাগতম! নিচের বাটন ব্যবহার করুন:"):
     markup = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -129,20 +176,30 @@ def send_services_menu(chat_id, message_id=None):
     else:
         bot.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
 
+def get_country_name(code):
+    countries = {
+        "US": "United States",
+        "GB": "United Kingdom",
+        "CA": "Canada",
+        "FR": "France",
+        "MM": "Myanmar",
+        "VE": "Venezuela"
+    }
+    return countries.get(code.upper(), code)
+
 # ─── IVASMS ব্যাকএন্ড ইঞ্জিন (টোকেন ও সেশন বাইপাস) ───
 def login_ivasms():
     email = get_setting("ivasms_email")
     password = get_setting("ivasms_password")
     if not email or not password: return False
     
-    login_url = "https://ivasms.com/login"
+    login_url = "https://www.ivasms.com/login"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://ivasms.com/login",
+        "Referer": "https://www.ivasms.com/login",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
     }
     try:
-        # ১ম ধাপ: লগইন পেজ থেকে CSRF টোকেন বের করা
         res = session.get(login_url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
         token_input = soup.find('input', {'name': '_token'})
@@ -155,39 +212,35 @@ def login_ivasms():
         if csrf_token:
             payload["_token"] = csrf_token
             
-        # ২য় ধাপ: সিকিউর লগইন রিকোয়েস্ট পাঠানো
         post_res = session.post(login_url, data=payload, headers=headers, timeout=10)
         
-        # সফল লগইনে সাধারণত ড্যাশবোর্ড পেজ বা লগআউট বাটন দেখা যায়
-        if "logout" in post_res.text.lower() or "dashboard" in post_res.text.lower() or post_res.status_code in [200, 302]:
+        if "logout" in post_res.text.lower() or "dashboard" in post_res.text.lower() or "portal" in post_res.url or post_res.status_code in [200, 302]:
             return True
     except Exception as e:
         print(f"লগইন এরর: {e}")
     return False
 
-# কুকি সেশন হ্যান্ডলার (ম্যানুয়াল কুকি ও অটো-লগইন সমন্বয়)
 def get_session_page(url):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     cookie = get_setting("ivasms_cookie")
     if cookie:
-        # ম্যানুয়াল কুকি সেট করা থাকলে সেটি হেডারে বসাবে
         headers["Cookie"] = cookie
         
     try:
         res = session.get(url, headers=headers, timeout=10)
-        # কুকি না থাকলে অথবা সেশন শেষ হয়ে গেলে অটো লগইনের চেষ্টা করবে
         if "login" in res.url or ("login" in res.text.lower() and "logout" not in res.text.lower()):
-            if not cookie:  # কুকি না থাকলেই কেবল অটো লগইন করবে
+            if not cookie:
                 print("সেশন শেষ! পুনরায় ব্যাকগ্রাউন্ড লগইন করা হচ্ছে...")
                 if login_ivasms():
                     res = session.get(url, headers=headers, timeout=10)
         return res
-    except:
+    except Exception as e:
+        print(f"পেজ লোড করতে ত্রুটি: {e}")
         return None
 
-def fetch_ivasms_number():
+def fetch_ivasms_number(country_code=None):
     url = get_setting("number_url")
     if not url: return None
     try:
@@ -195,56 +248,108 @@ def fetch_ivasms_number():
         if not res: return None
         soup = BeautifulSoup(res.text, 'html.parser')
         rows = soup.find_all('tr')
+        
         for row in rows:
-            cols = row.find_all('td')
+            cols = [td.text.strip() for td in row.find_all('td')]
             if len(cols) > 1:
-                num = cols[1].text.strip().replace('+', '').replace(' ', '')
-                if num.isdigit() and len(num) >= 8:
-                    return num
-    except: pass
+                # যে কলামে নম্বর আছে সেটি সনাক্ত করা
+                for col in cols:
+                    clean_num = col.replace('+', '').replace(' ', '').replace('-', '')
+                    if clean_num.isdigit() and len(clean_num) >= 8:
+                        row_text = row.text.lower()
+                        # যদি অ্যাডমিন কান্ট্রি অনুযায়ী ফিল্টার চায়
+                        if country_code:
+                            c_name = get_country_name(country_code).lower()
+                            if country_code.lower() in row_text or c_name in row_text:
+                                return clean_num
+                        else:
+                            return clean_num
+    except Exception as e:
+        print(f"নম্বর ফেচ করতে ত্রুটি: {e}")
     return None
 
-# ─── ওটিপি ফেচিং এবং ফরোয়ার্ডিং লজিক ───
-def auto_fetch_ivasms_otp(chat_id, phone, selected_app, manual=False):
-    if not manual:
-        time.sleep(10)  # অটোমেটিক ওটিপির জন্য ১০ সেকেন্ড ওয়েট
-        
+# ─── ওটিপি ফেচিং এবং ফরোয়ার্ডিং লজিক (ইউজার রিকোয়েস্ট ফেচার) ───
+def poll_user_otp(chat_id, phone, selected_app):
     sms_url = get_setting("sms_url")
     if not sms_url: return
     
-    try:
-        res = get_session_page(sms_url)
-        if not res: return
-        soup = BeautifulSoup(res.text, 'html.parser')
-        rows = soup.find_all('tr')
-        found = False
-        
-        for row in rows:
-            row_text = row.text.replace('+', '').replace(' ', '')
-            if phone in row_text:
-                cols = row.find_all('td')
-                if cols:
-                    otp_message = cols[-1].text.strip()
-                    msg_text = f"🔥 **নতুন ওটিপি অ্যালার্ট!** 🔥\n\n" \
-                               f"📱 অ্যাপ: #{selected_app.capitalize()}\n" \
-                               f"📞 নম্বর: `+{phone}`\n" \
-                               f"✉️ ওটিপি মেসেজ: {otp_message}"
-                    
-                    # ১. ইউজারের ইনবক্সে যাবে
-                    bot.send_message(chat_id, msg_text, parse_mode="Markdown")
-                    # ২. ডাইনামিক চ্যানেলে যাবে
-                    try: bot.send_message(int(get_setting("channel_id")), msg_text, parse_mode="Markdown")
-                    except: pass
-                    # ৩. ডাইনামিক গ্রুপে যাবে
-                    try: bot.send_message(int(get_setting("group_id")), msg_text, parse_mode="Markdown")
-                    except: pass
-                    found = True
-                    break
-                    
-        if not found and manual:
-            bot.send_message(chat_id, "⚠️ ওটিপি এখনো আসেনি! অ্যাপে সেন্ড করে পুনরায় '📥 Fetch Code' চাপুন বা নম্বর চেঞ্জ করুন।")
-    except Exception as e:
-        if manual: bot.send_message(chat_id, f"❌ সার্ভার রেসপন্স করেনি। এরর: {str(e)}")
+    # ২ মিনিট পর্যন্ত ওটিপির জন্য অপেক্ষা করবে
+    for _ in range(24):
+        try:
+            res = get_session_page(sms_url)
+            if res:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                rows = soup.find_all('tr')
+                for row in rows:
+                    row_text = row.text.replace('+', '').replace(' ', '')
+                    if phone in row_text:
+                        cols = [td.text.strip() for td in row.find_all('td')]
+                        if cols:
+                            otp_message = cols[-1]
+                            msg_text = f"🔥 **আপনার ওটিপি কোড এসে গেছে!** 🔥\n\n" \
+                                       f"📱 অ্যাপ: #{selected_app.capitalize()}\n" \
+                                       f"📞 নম্বর: `+{phone}`\n" \
+                                       f"✉️ ওটিপি মেসেজ: {otp_message}"
+                            
+                            # ১. ইউজারের ইনবক্সে যাবে
+                            bot.send_message(chat_id, msg_text, parse_mode="Markdown")
+                            
+                            # ২. মেইন গ্রুপে যাবে
+                            try: bot.send_message(int(get_setting("group_id")), msg_text, parse_mode="Markdown")
+                            except: pass
+                            
+                            # ৩. চ্যানেলে যাবে
+                            try: bot.send_message(int(get_setting("channel_id")), msg_text, parse_mode="Markdown")
+                            except: pass
+                            return
+        except Exception as e:
+            print(f"ইউজার ওটিপি ট্র্যাকিং এরর: {e}")
+        time.sleep(5)
+
+# ─── স্বয়ংক্রিয় লাইভ ওটিপি গ্রুপ ফরোয়ার্ডার ইঞ্জিন (ব্যাকগ্রাউন্ড থ্রেড) ───
+def live_sms_forwarder_thread():
+    while True:
+        try:
+            if get_setting("live_forward_enabled") == "1":
+                sms_url = get_setting("sms_url")
+                if sms_url:
+                    res = get_session_page(sms_url)
+                    if res:
+                        soup = BeautifulSoup(res.text, 'html.parser')
+                        rows = soup.find_all('tr')
+                        
+                        conn = sqlite3.connect("bot_settings.db")
+                        cursor = conn.cursor()
+                        
+                        for row in rows:
+                            cols = [td.text.strip() for td in row.find_all('td')]
+                            if len(cols) >= 2:
+                                sid = cols[0]
+                                content = cols[-1]
+                                
+                                # মেসেজটির ডুপ্লিকেট রোধ করতে হ্যাশ কোড তৈরি
+                                sms_string = f"{sid}_{content}"
+                                sms_hash = hashlib.md5(sms_string.encode('utf-8')).hexdigest()
+                                
+                                cursor.execute("SELECT 1 FROM processed_sms WHERE sms_hash=?", (sms_hash,))
+                                if not cursor.fetchone():
+                                    cursor.execute("INSERT INTO processed_sms (sms_hash) VALUES (?)", (sms_hash,))
+                                    conn.commit()
+                                    
+                                    msg_text = f"🔥 **লাইভ ওটিপি রিসিভড!** 🔥\n\n" \
+                                               f"📞 প্রেরক/নম্বর: `{sid}`\n" \
+                                               f"✉️ লাইভ এসএমএস: {content}"
+                                               
+                                    # ডাইনামিক চ্যানেল ও গ্রুপে ফরোয়ার্ডিং
+                                    try: bot.send_message(int(get_setting("channel_id")), msg_text, parse_mode="Markdown")
+                                    except: pass
+                                    try: bot.send_message(int(get_setting("group_id")), msg_text, parse_mode="Markdown")
+                                    except: pass
+                                    
+                        conn.close()
+        except Exception as e:
+            print(f"লাইভ এসএমএস ফরোয়ার্ডার ইঞ্জিনে ত্রুটি: {e}")
+        time.sleep(12)  # প্রতি ১২ সেকেন্ডে পোর্টাল স্ক্যান করবে
 
 # ─── ভিজ্যুয়াল ড্যাশবোর্ড জেনারেটর ───
 def send_admin_dashboard(chat_id, message_id=None):
@@ -257,30 +362,32 @@ def send_admin_dashboard(chat_id, message_id=None):
     
     num_status = "✅ Set" if num_url else "❌ Not Set"
     sms_status = "✅ Set" if sms_url else "❌ Not Set"
+    fwd_status = "✅ Enabled" if get_setting("live_forward_enabled") == "1" else "❌ Disabled"
     
-    # লগইন মেথড অনুযায়ী স্ট্যাটাস প্রদর্শন
     if cookie:
         login_status = "✅ Active (Manual Cookie)"
     elif email:
-        login_status = f"✅ Active (Auto Login: {email})"
+        login_status = f"✅ Active (Auto: {email})"
     else:
         login_status = "❌ Not Logged In"
     
     dashboard_text = f"👑 **CONTROL DASHBOARD (অ্যাডমিন প্যানেল)**\n" \
                      f"----------------------------------------\n" \
                      f"🔐 IVASMS Status : {login_status}\n" \
-                     f"📞 Number URL   : {num_status}\n" \
+                     f"📞 Numbers URL   : {num_status}\n" \
                      f"✉️ Live SMS URL : {sms_status}\n" \
-                     f"📢 Channel ID   : `{c_id}`\n" \
-                     f"💬 Group ID     : `{g_id}`\n" \
+                     f"📢 OTP Channel ID: `{c_id}`\n" \
+                     f"💬 OTP Group ID  : `{g_id}`\n" \
+                     f"🔄 Live Forward  : {fwd_status}\n" \
                      f"----------------------------------------\n" \
-                     f"💡 যেকোনো সেটিংস পরিবর্তন করতে নিচের বাটনে চাপুন:"
+                     f"💡 সেটিংস কনফিগার করতে নিচের বাটনগুলো ব্যবহার করুন:"
                      
     markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🔐 IVASMS Login (Auto)", callback_data="adm_login"), InlineKeyboardButton("🍪 Set Session Cookie", callback_data="adm_cookie"))
-    markup.row(InlineKeyboardButton("📞 Set Number URL", callback_data="adm_num_url"), InlineKeyboardButton("✉️ Set Live SMS URL", callback_data="adm_sms_url"))
-    markup.row(InlineKeyboardButton("📢 Set Channel Link", callback_data="adm_channel"), InlineKeyboardButton("💬 Set Group Link", callback_data="adm_group"))
-    markup.row(InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="adm_refresh"))
+    markup.row(InlineKeyboardButton("🔐 Auto Login", callback_data="adm_login"), InlineKeyboardButton("🍪 Set Cookie", callback_data="adm_cookie"))
+    markup.row(InlineKeyboardButton("📞 Numbers URL", callback_data="adm_num_url"), InlineKeyboardButton("✉️ Live SMS URL", callback_data="adm_sms_url"))
+    markup.row(InlineKeyboardButton("📢 Channel ID & Link", callback_data="adm_channel"), InlineKeyboardButton("💬 Group ID & Link", callback_data="adm_group"))
+    markup.row(InlineKeyboardButton("➕ Add Join Channel", callback_data="adm_add_fsub"), InlineKeyboardButton("❌ Del Join Channel", callback_data="adm_del_fsub"))
+    markup.row(InlineKeyboardButton("🔄 Toggle Forwarding", callback_data="adm_toggle_fwd"), InlineKeyboardButton("🔄 Refresh Panel", callback_data="adm_refresh"))
     
     if message_id:
         try: bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=dashboard_text, reply_markup=markup, parse_mode="Markdown")
@@ -288,23 +395,18 @@ def send_admin_dashboard(chat_id, message_id=None):
     else:
         bot.send_message(chat_id, dashboard_text, reply_markup=markup, parse_mode="Markdown")
 
-# ─── অ্যাডমিন স্টেট ───
-admin_states = {}
-
 # ─── বটের মূল মেসেজ হ্যান্ডলারসমূহ ───
 
 # ১. স্টার্ট কমান্ড
 @bot.message_handler(commands=['start'])
 def start_bot(message):
     save_user(message.chat.id)
-    if message.chat.id == ADMIN_ID:
-        send_home_keyboard(message.chat.id, text="👋 ওটিপি ড্যাশবোর্ডে স্বাগতম! নিচের বাটন ব্যবহার করুন:")
-        send_admin_dashboard(message.chat.id)
+    if not check_all_subscriptions(message.chat.id):
+        send_join_request(message.chat.id)
     else:
-        if is_subscribed(message.chat.id): 
-            send_home_keyboard(message.chat.id)
-        else: 
-            send_join_request(message.chat.id)
+        send_home_keyboard(message.chat.id)
+        if message.chat.id == ADMIN_ID:
+            send_admin_dashboard(message.chat.id)
 
 # ২. গ্লোবাল নোটিশ কমান্ড
 @bot.message_handler(commands=['notice'])
@@ -316,7 +418,7 @@ def send_notice(message):
                 for user in f.read().splitlines():
                     try: bot.send_message(int(user), f"📢 **নোটিশ:**\n\n{notice_text}")
                     except: pass
-            bot.reply_to(message, "✅ সফলভাবে নোটিশ পাঠানো হয়েছে।")
+            bot.reply_to(message, "✅ নোটিশ পাঠানো হয়েছে।")
 
 # ৩. অ্যাডমিন ইনপুট প্রসেসর স্টেট মেশিন
 @bot.message_handler(func=lambda msg: msg.chat.id in admin_states and msg.chat.id == ADMIN_ID)
@@ -327,59 +429,49 @@ def handle_admin_steps(message):
         
         if state == "email":
             admin_states[message.chat.id]["email"] = message.text
-            bot.reply_to(message, "🔑 এবার আপনার IVASMS পাসওয়ার্ডটি টাইপ করে পাঠান:")
+            bot.reply_to(message, "🔑 এবার আপনার IVASMS পাসওয়ার্ডটি দিন:")
             admin_states[message.chat.id]["step"] = "password"
             
         elif state == "password":
             email = admin_states[message.chat.id]["email"]
             password = message.text
-            
-            # সাময়িকভাবে ডেটা সেট করে লগইন চেষ্টা করা হবে
             set_setting("ivasms_email", email)
             set_setting("ivasms_password", password)
-            status_msg = bot.reply_to(message, "⏳ IVASMS প্যানেলে লগইন করার চেষ্টা করা হচ্ছে...")
+            status_msg = bot.reply_to(message, "⏳ IVASMS লগইন চেক করা হচ্ছে...")
             
             if login_ivasms():
-                try: bot.delete_message(message.chat.id, status_msg.message_id)
-                except: pass
-                # অটো লগইন সফল হলে ব্যাকআপ কুকি ফিল্ড ক্লিয়ার করে দেওয়া হবে
-                set_setting("ivasms_cookie", "")
-                bot.send_message(message.chat.id, "✅ **লগইন সফল হয়েছে!**\n\nসফলভাবে আপনার সেশন ড্যাশবোর্ডে সেট হয়ে গেছে।")
+                set_setting("ivasms_cookie", "")  # অটো লগইন হলে ম্যানুয়াল কুকি বাতিল
+                bot.send_message(message.chat.id, "✅ **লগইন সফল হয়েছে!**")
             else:
-                try: bot.delete_message(message.chat.id, status_msg.message_id)
-                except: pass
-                # লগইন ব্যর্থ হলে ইমেইল-পাসওয়ার্ড ক্লিয়ার করে দেওয়া হবে যাতে ড্যাশবোর্ড আপডেট থাকে
                 set_setting("ivasms_email", "")
                 set_setting("ivasms_password", "")
-                bot.send_message(message.chat.id, "❌ **লগইন ব্যর্থ হয়েছে!**\n\nদয়া করে আপনার ইমেইল ও পাসওয়ার্ড চেক করে পুনরায় চেষ্টা করুন। (বি:দ্র: ক্লাউডফ্লেয়ারের ব্লক এড়াতে আপনি বিকল্প ম্যানুয়াল কুকি সেটআপ পদ্ধতি ব্যবহার করতে পারেন।)")
-                
+                bot.send_message(message.chat.id, "❌ **লগইন ব্যর্থ!** ইমেইল ও পাসওয়ার্ড পুনরায় চেক করুন।")
             send_admin_dashboard(message.chat.id)
             del admin_states[message.chat.id]
             
         elif state == "cookie":
             set_setting("ivasms_cookie", message.text)
-            # ম্যানুয়াল কুকি সেট করলে কনফ্লিক্ট এড়াতে অটো ইমেইল-পাসওয়ার্ড ক্লিয়ার করা হবে
             set_setting("ivasms_email", "")
             set_setting("ivasms_password", "")
-            bot.reply_to(message, "✅ **কুকি সফলভাবে সেভ করা হয়েছে!**\n\nবট এখন আপনার ব্রাউজার সেশন কুকি ব্যবহার করে কাজ করবে।")
+            bot.reply_to(message, "✅ **কুকি সেশন সেভ হয়েছে!**")
             send_admin_dashboard(message.chat.id)
             del admin_states[message.chat.id]
             
         elif state == "num_url":
             set_setting("number_url", message.text)
-            bot.reply_to(message, "✅ **ধাপ ১ সফল!**\n\nMy Numbers পেজের লিংকটি ডাটাবেসে সেভ করা হয়েছে।")
+            bot.reply_to(message, "✅ **My Numbers URL সেট হয়েছে!**")
             send_admin_dashboard(message.chat.id)
             del admin_states[message.chat.id]
             
         elif state == "sms_url":
             set_setting("sms_url", message.text)
-            bot.reply_to(message, "✅ **ধাপ ২ সফল!**\n\nLive SMS পেজের লিংকটি ডাটাবেসে সেভ করা হয়েছে।")
+            bot.reply_to(message, "✅ **Live SMS URL সেট হয়েছে!**")
             send_admin_dashboard(message.chat.id)
             del admin_states[message.chat.id]
             
         elif state == "c_id":
             set_setting("channel_id", message.text)
-            bot.reply_to(message, "🔗 এবার নতুন ওটিপি চ্যানেল জয়েন করার লিংক (Link) টি দিন:")
+            bot.reply_to(message, "🔗 এবার নতুন ওটিপি চ্যানেল লিংকটি দিন:")
             admin_states[message.chat.id]["step"] = "c_link"
             
         elif state == "c_link":
@@ -390,7 +482,7 @@ def handle_admin_steps(message):
             
         elif state == "g_id":
             set_setting("group_id", message.text)
-            bot.reply_to(message, "🔗 এবার নতুন ওটিপি গ্রুপ জয়েন করার লিংক (Link) টি দিন:")
+            bot.reply_to(message, "🔗 এবার নতুন ওটিপি গ্রুপ লিংকটি দিন:")
             admin_states[message.chat.id]["step"] = "g_link"
             
         elif state == "g_link":
@@ -399,15 +491,28 @@ def handle_admin_steps(message):
             send_admin_dashboard(message.chat.id)
             del admin_states[message.chat.id]
             
+        elif state == "add_fsub_id":
+            admin_states[message.chat.id]["fsub_id"] = message.text
+            bot.reply_to(message, "🔗 এবার সেই চ্যানেলটির জয়েনিং লিংক (Join Link) দিন:")
+            admin_states[message.chat.id]["step"] = "add_fsub_link"
+            
+        elif state == "add_fsub_link":
+            f_id = admin_states[message.chat.id]["fsub_id"]
+            f_link = message.text
+            add_fsub_channel(f_id, f_link)
+            bot.reply_to(message, "✅ নতুন সাবস্ক্রিপশন চ্যানেল সফলভাবে ড্যাশবোর্ডে যোগ করা হয়েছে!")
+            send_admin_dashboard(message.chat.id)
+            del admin_states[message.chat.id]
+            
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ একটি ভুল হয়েছে: {str(e)}")
+        bot.send_message(message.chat.id, f"❌ ভুল ইনপুট: {str(e)}")
         if message.chat.id in admin_states:
             del admin_states[message.chat.id]
 
-# ৪. ইউজার কিবোর্ড বাটন কন্ট্রোল (ক্যাচ-অল হ্যান্ডলার সবার নিচে)
+# ৪. ইউজার কিবোর্ড বাটন কন্ট্রোল (ক্যাচ-অল)
 @bot.message_handler(func=lambda message: True)
 def handle_text_buttons(message):
-    if message.chat.id != ADMIN_ID and not is_subscribed(message.chat.id):
+    if not check_all_subscriptions(message.chat.id):
         send_join_request(message.chat.id)
         return
 
@@ -426,12 +531,12 @@ def handle_text_buttons(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_membership")
 def check_membership(call):
-    if is_subscribed(call.from_user.id):
+    if check_all_subscriptions(call.from_user.id):
         try: bot.delete_message(call.message.chat.id, call.message.message_id)
         except: pass
         send_home_keyboard(call.message.chat.id, "✅ ভেরিফিকেশন সফল হয়েছে!")
     else:
-        bot.answer_callback_query(call.id, text="❌ আপনি এখনো জয়েন করেননি!", show_alert=True)
+        bot.answer_callback_query(call.id, text="❌ আপনি এখনো সকল চ্যানেলে জয়েন করেননি!", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_main")
 def back_to_main(call):
@@ -461,17 +566,17 @@ def show_number_interface(call):
         bot.answer_callback_query(call.id, text="⚠️ বটটি কনফিগার করা নেই। অ্যাডমিন এখনো লিংক সেটআপ করেনি।", show_alert=True)
         return
         
-    fetched_num = fetch_ivasms_number()
+    fetched_num = fetch_ivasms_number(country_code)
     
     if not fetched_num:
-        rand_suffix = str(random.randint(100000, 999999))
-        fetched_num = f"8801712{rand_suffix}"
+        bot.answer_callback_query(call.id, text="❌ এই মুহূর্তে প্যানেলে এই দেশের কোনো নম্বর ফাঁকা নেই।", show_alert=True)
+        return
 
     msg_text = f"🌍Country ➤ {country_code}\n\n" \
                f"📞Number: `+{fetched_num}`\n\n" \
                f"⏳Status: Waiting For OTP\n" \
                f"⏰Number Validity ➤ 10 minutes\n" \
-               f"🔷 ওটিপি পেতে নিচের '📥 Fetch Code' বাটনে ক্লিক করুন অথবা অটোমেটিক ওটিপির জন্য ১০ সেকেন্ড ওয়েট করুন।😊"
+               f"🔷 ওটিপি পেতে নিচের '📥 Fetch Code' বাটনে ক্লিক করুন অথবা অটোমেটিক ওটিপির জন্য অপেক্ষা করুন।😊"
     
     markup = InlineKeyboardMarkup()
     markup.row(InlineKeyboardButton("🔄 Change Number", callback_data=f"change_{country_code.lower()}_{selected_app}"))
@@ -485,7 +590,8 @@ def show_number_interface(call):
     try: bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=msg_text, reply_markup=markup, parse_mode="Markdown")
     except: bot.send_message(call.message.chat.id, msg_text, reply_markup=markup, parse_mode="Markdown")
     
-    Thread(target=auto_fetch_ivasms_otp, args=(call.message.chat.id, clean_phone, selected_app, False)).start()
+    # ইউজারের নির্দিষ্ট ওটিপি ট্র্যাকার ব্যাকগ্রাউন্ড থ্রেড চালু
+    Thread(target=poll_user_otp, args=(call.message.chat.id, clean_phone, selected_app)).start()
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("fetch_"))
 def manual_fetch_trigger(call):
@@ -494,9 +600,10 @@ def manual_fetch_trigger(call):
     selected_app = data_parts[2]
     
     bot.answer_callback_query(call.id, text="🔍 ওটিপি কোড খোঁজা হচ্ছে...", show_alert=False)
-    auto_fetch_ivasms_otp(call.message.chat.id, phone, selected_app, manual=True)
+    # ১০ সেকেন্ড অপেক্ষা না করে ইনস্ট্যান্ট চেক
+    poll_user_otp(call.message.chat.id, phone, selected_app)
 
-# অ্যাডমিন ড্যাশবোর্ড কলব্যাক হ্যান্ডলার (নতুন কুকি বাটন সহ)
+# অ্যাডমিন প্যানেল কলব্যাক কন্ট্রোলার
 @bot.callback_query_handler(func=lambda call: call.data.startswith("adm_") and call.from_user.id == ADMIN_ID)
 def handle_admin_callbacks(call):
     action = call.data
@@ -505,37 +612,23 @@ def handle_admin_callbacks(call):
         bot.answer_callback_query(call.id, text="🔄 ড্যাশবোর্ড আপডেট করা হয়েছে!")
         
     elif action == "adm_login":
-        bot.send_message(call.message.chat.id, "📧 **IVASMS লগইন গাইড 📖**\n\n১. প্রথমে আপনার IVASMS একাউন্টের ইমেইলটি নিচে টাইপ করে পাঠান:")
+        bot.send_message(call.message.chat.id, "📧 **IVASMS লগইন গাইড**\n\nপ্রথমে আপনার IVASMS জিমেইলটি নিচে টাইপ করে পাঠান:")
         admin_states[call.message.chat.id] = {"step": "email", "msg_id": call.message.message_id}
         bot.answer_callback_query(call.id)
         
     elif action == "adm_cookie":
-        instruction = "🍪 **Session Cookie সেটআপ গাইড 📖**\n\n" \
-                      "ক্লাউডফ্লেয়ারের সিকিউরিটি প্রোটেকশন বাইপাস করতে ম্যানুয়াল কুকি পদ্ধতি ব্যবহার করুন।\n\n" \
-                      "১. আপনার ব্রাউজারে `ivasms.com` এ লগইন করুন।\n" \
-                      "২. ব্রাউজারের Cookie-Editor এক্সটেনশন বা DevTools থেকে `laravel_session` এবং `XSRF-TOKEN` সহ সম্পূর্ণ কুকি টেক্সটটি কপি করুন।\n" \
-                      "৩. পুরো কুকি টেক্সটটি নিচে পেস্ট করে আমাকে পাঠিয়ে দিন:\n\n" \
-                      "*(যেমন: `laravel_session=eyJ...; XSRF-TOKEN=eyJ...`)*"
+        instruction = "🍪 **Session Cookie সেটআপ গাইড**\n\n১. ব্রাউজারে লগইন করা অবস্থায় Cookie-Editor থেকে কুকি কপি করে এখানে পেস্ট করুন:"
         bot.send_message(call.message.chat.id, instruction)
         admin_states[call.message.chat.id] = {"step": "cookie", "msg_id": call.message.message_id}
         bot.answer_callback_query(call.id)
         
     elif action == "adm_num_url":
-        instruction = "📂 **My Numbers লিংক সেটআপ গাইড 📖**\n\n" \
-                      "১. প্রথমে আপনার ব্রাউজারে `ivasms.com` এ লগইন করুন।\n" \
-                      "২. বাম পাশের সাইডবার মেনু থেকে **'My Numbers'** বা **'Numbers'** পেজে যান।\n" \
-                      "৩. পেজটিতে থাকা অবস্থায় ব্রাউজারের ওপরের অ্যাড্রেস বার থেকে সম্পূর্ণ লিংকটি কপি করুন।\n" \
-                      "৪. কপি করা লিংকটি নিচে পেস্ট করে আমাকে পাঠিয়ে দিন:"
-        bot.send_message(call.message.chat.id, instruction)
+        bot.send_message(call.message.chat.id, "📞 আপনার IVASMS-এর **Numbers/Test API URL** দিন:")
         admin_states[call.message.chat.id] = {"step": "num_url", "msg_id": call.message.message_id}
         bot.answer_callback_query(call.id)
         
     elif action == "adm_sms_url":
-        instruction = "💬 **Live SMS লিংক সেটআপ গাইড 📖**\n\n" \
-                      "১. আপনার `ivasms.com` একাউন্টে লগইন থাকা অবস্থায় মেনু থেকে **'Client Active SMS'** বা **'SMS Logs'** পেজে যান।\n" \
-                      "২. যেখানে লাইভ ওটিপি মেসেজগুলো আসে, সেই পেজের ওপরের ব্রাউজার লিংকটি সম্পূর্ণ কপি করুন।\n" \
-                      "৩. কপি করা লিংকটি নিচে পেস্ট করে আমাকে পাঠিয়ে দিন:"
-        bot.send_message(call.message.chat.id, instruction)
+        bot.send_message(call.message.chat.id, "✉️ আপনার IVASMS-এর **Live SMS API URL** দিন:")
         admin_states[call.message.chat.id] = {"step": "sms_url", "msg_id": call.message.message_id}
         bot.answer_callback_query(call.id)
         
@@ -548,9 +641,46 @@ def handle_admin_callbacks(call):
         bot.send_message(call.message.chat.id, "💬 নতুন **Group ID** দিন (যেমন: -1004309875319):")
         admin_states[call.message.chat.id] = {"step": "g_id", "msg_id": call.message.message_id}
         bot.answer_callback_query(call.id)
+        
+    elif action == "adm_add_fsub":
+        bot.send_message(call.message.chat.id, "➕ **ফোর্স সাবস্ক্রিপশন চ্যানেল যোগ:**\n\nচ্যানেল আইডি দিন (যেমন: `-10012345678`):")
+        admin_states[call.message.chat.id] = {"step": "add_fsub_id", "msg_id": call.message.message_id}
+        bot.answer_callback_query(call.id)
+        
+    elif action == "adm_del_fsub":
+        channels = get_fsub_channels()
+        if not channels:
+            bot.answer_callback_query(call.id, text="⚠️ কোনো সাবস্ক্রিপশন চ্যানেল যোগ করা নেই!", show_alert=True)
+            return
+        markup = InlineKeyboardMarkup()
+        for c_id, link in channels:
+            markup.row(InlineKeyboardButton(f"❌ Del: {c_id}", callback_data=f"fsubdel_{c_id}"))
+        markup.row(InlineKeyboardButton("⬅️ Back", callback_data="adm_refresh"))
+        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="❌ **ডিলিট করার জন্য নিচের জয়েন চ্যানেলটি সিলেক্ট করুন:**", reply_markup=markup)
+        bot.answer_callback_query(call.id)
+        
+    elif action == "adm_toggle_fwd":
+        current = get_setting("live_forward_enabled")
+        new_val = "0" if current == "1" else "1"
+        set_setting("live_forward_enabled", new_val)
+        send_admin_dashboard(call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id, text=f"🔄 ফরোয়ার্ডিং {'সচল' if new_val=='1' else 'বন্ধ'} করা হয়েছে!")
+
+# ডায়নামিক ফোর্স সাবস্ক্রিপশন ডিলিট অ্যাকশন
+@bot.callback_query_handler(func=lambda call: call.data.startswith("fsubdel_") and call.from_user.id == ADMIN_ID)
+def handle_fsub_delete(call):
+    c_id = call.data.replace("fsubdel_", "")
+    delete_fsub_channel(c_id)
+    bot.answer_callback_query(call.id, text="✅ চ্যানেলটি সফলভাবে ডিলিট করা হয়েছে!")
+    send_admin_dashboard(call.message.chat.id, call.message.message_id)
 
 if __name__ == "__main__":
+    # ১. ফ্লাস্ক রানিং করা হলো
     keep_alive()
+    
+    # ২. স্বয়ংক্রিয় ব্যাকগ্রাউন্ড লাইভ ওটিপি ফরোয়ার্ডার থ্রেড চালু করা হলো
+    Thread(target=live_sms_forwarder_thread, daemon=True).start()
+    
     print("🚀 প্রফেশনাল ওটিপি বট সফলভাবে লাইভ হয়েছে...")
     try: bot.polling(none_stop=True, interval=0, timeout=20)
     except Exception as e: print(f"বট রানিংয়ে সমস্যা: {e}")
