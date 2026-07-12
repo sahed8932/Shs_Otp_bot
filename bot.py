@@ -10,14 +10,18 @@ from flask import Flask
 from threading import Thread
 from bs4 import BeautifulSoup
 
-# ক্লাউডফ্লেয়ার সিকিউরিটি বাইপাস করার জন্য ক্লাউডস্ক্র্যাপার লোড করার চেষ্টা
-try:
-    import cloudscraper
-    session = cloudscraper.create_scraper()  # ক্লাউডফ্লেয়ার বাইপাস সেশন
-    print("🚀 Cloudscraper সফলভাবে চালু হয়েছে! ক্লাউডফ্লেয়ার বাইপাস একটিভ।")
-except Exception as e:
-    session = requests.Session()
-    print(f"⚠️ Cloudscraper লোড করা যায়নি: {e}। সাধারণ requests.Session() ব্যবহার করা হচ্ছে।")
+# ক্লাউডফ্লেয়ার সিকিউরিটি বাইপাস করার জন্য ক্লাউডস্ক্র্যাপার সেশন তৈরি
+def create_safe_scraper():
+    try:
+        import cloudscraper
+        scraper = cloudscraper.create_scraper()
+        print("🚀 Cloudscraper সফলভাবে চালু হয়েছে! ক্লাউডফ্লেয়ার বাইপাস একটিভ।")
+        return scraper
+    except Exception as e:
+        print(f"⚠️ Cloudscraper লোড করা যায়নি: {e}। সাধারণ requests.Session() ব্যবহার করা হচ্ছে।")
+        return requests.Session()
+
+session = create_safe_scraper()
 
 # ─── কনফিগারেশন ───
 BOT_TOKEN = "8981181566:AAF7mng2by7JDKIJYc_7P9clBE3tINBWdkY"  # আপনার বটের টোকেনটি এখানে বসান
@@ -40,21 +44,14 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# ─── SQLite ডাটাবেস হ্যান্ডলিং (ড্যাশবোর্ড সেটিংস আজীবন সেভ রাখার জন্য) ───
+# ─── SQLite ডাটাবেস হ্যান্ডলিং (৩০ সেকেন্ডের সেফ টাইমআউট সহ) ───
 def init_db():
-    conn = sqlite3.connect("bot_settings.db")
+    conn = sqlite3.connect("bot_settings.db", timeout=30)
     cursor = conn.cursor()
-    
-    # কনফিগারেশন টেবিল
     cursor.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)''')
-    
-    # প্রসেসড লাইভ ওটিপি ট্র্যাক করার টেবিল (ডুপ্লিকেট মেসেজ রোধ করার জন্য)
     cursor.execute('''CREATE TABLE IF NOT EXISTS processed_sms (sms_hash TEXT PRIMARY KEY)''')
-    
-    # ডাইনামিক ফোর্স সাবস্ক্রিপশন চ্যানেল লিস্ট
     cursor.execute('''CREATE TABLE IF NOT EXISTS fsub_channels (chat_id TEXT PRIMARY KEY, link TEXT)''')
     
-    # ডিফল্ট সেটিংস (আপনার দেয়া নতুন পোর্টাল লিংকগুলো সহ)
     defaults = {
         "channel_id": "-1003956226642",
         "group_id": "-1004309875319",
@@ -65,7 +62,7 @@ def init_db():
         "ivasms_email": "bdyasmin0@gmail.com",
         "ivasms_password": "1Xsahed@",
         "ivasms_cookie": "",
-        "live_forward_enabled": "1"  # লাইভ ওটিপি গ্রুপে অটো ফরোয়ার্ডিং সচল
+        "live_forward_enabled": "1"
     }
     for key, val in defaults.items():
         cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (key, val))
@@ -76,51 +73,67 @@ def init_db():
 init_db()
 
 def get_setting(key):
-    conn = sqlite3.connect("bot_settings.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM config WHERE key=?", (key,))
-    row = cursor.fetchone()
-    conn.close()
-    return row[0] if row else ""
+    try:
+        conn = sqlite3.connect("bot_settings.db", timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM config WHERE key=?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else ""
+    except Exception as e:
+        print(f"Database Read Error: {e}")
+        return ""
 
 def set_setting(key, value):
-    conn = sqlite3.connect("bot_settings.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect("bot_settings.db", timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Database Write Error: {e}")
 
 # ─── ডাইনামিক ফোর্স সাবস্ক্রিপশন ফাংশনসমূহ ───
 def get_fsub_channels():
-    conn = sqlite3.connect("bot_settings.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT chat_id, link FROM fsub_channels")
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
+    try:
+        conn = sqlite3.connect("bot_settings.db", timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("SELECT chat_id, link FROM fsub_channels")
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        print(f"Database FSub Read Error: {e}")
+        return []
 
 def add_fsub_channel(chat_id, link):
-    conn = sqlite3.connect("bot_settings.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO fsub_channels (chat_id, link) VALUES (?, ?)", (chat_id, link))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect("bot_settings.db", timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO fsub_channels (chat_id, link) VALUES (?, ?)", (chat_id, link))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Database FSub Write Error: {e}")
 
 def delete_fsub_channel(chat_id):
-    conn = sqlite3.connect("bot_settings.db")
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM fsub_channels WHERE chat_id=?", (chat_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect("bot_settings.db", timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM fsub_channels WHERE chat_id=?", (chat_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Database FSub Delete Error: {e}")
 
 def check_all_subscriptions(user_id):
-    # অ্যাডমিনের জন্য সাবস্ক্রিপশন চেক করার দরকার নেই
     if user_id == ADMIN_ID:
         return True
     
     channels = get_fsub_channels()
     if not channels:
-        return True  # কোনো ফোর্স সাবস্ক্রিপশন চ্যানেল অ্যাড করা না থাকলে সরাসরি অ্যাপ্রুভড
+        return True
         
     for c_id, _ in channels:
         try:
@@ -128,7 +141,7 @@ def check_all_subscriptions(user_id):
             if status in ['left', 'kicked']:
                 return False
         except Exception as e:
-            print(f"চ্যানেল সাবস্ক্রিপশন চেক এরর: {e}")
+            print(f"সাবস্ক্রিপশন চেক করার সময় এরর: {e}")
             return False
     return True
 
@@ -136,24 +149,26 @@ def send_join_request(chat_id):
     channels = get_fsub_channels()
     markup = InlineKeyboardMarkup()
     
-    # ডাইনামিক জয়েনিং বাটন জেনারেট
     for i, (c_id, link) in enumerate(channels, 1):
         markup.row(InlineKeyboardButton(f"📢 Join OTP Channel {i}", url=link))
         
     markup.row(InlineKeyboardButton("✅ Joined", callback_data="check_membership"))
     bot.send_message(chat_id, "⚠️ সার্ভিসটি ব্যবহার করতে প্রথমে আমাদের ওটিপি চ্যানেল এবং গ্রুপগুলোতে জয়েন করুন। তারপর '✅ Joined' বাটনে ক্লিক করুন।", reply_markup=markup)
 
-# ─── কোর সাবস্ক্রিপশন ও উইজার ইন্টারফেস ফাংশনসমূহ ───
+# ─── কোর সাবস্ক্রিপশন ও ইউজার ইন্টারফেস ফাংশনসমূহ ───
 def save_user(user_id):
-    if not os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "w") as f:
-            f.write(f"{user_id}\n")
-    else:
-        with open(USERS_FILE, "r") as f:
-            users = f.read().splitlines()
-        if str(user_id) not in users:
-            with open(USERS_FILE, "a") as f:
+    try:
+        if not os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "w") as f:
                 f.write(f"{user_id}\n")
+        else:
+            with open(USERS_FILE, "r") as f:
+                users = f.read().splitlines()
+            if str(user_id) not in users:
+                with open(USERS_FILE, "a") as f:
+                    f.write(f"{user_id}\n")
+    except Exception as e:
+        print(f"ইউজার ফাইল রাইট এরর: {e}")
 
 def send_home_keyboard(chat_id, text="👋 ওটিপি ড্যাশবোর্ডে স্বাগতম! নিচের বাটন ব্যবহার করুন:"):
     markup = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -200,7 +215,7 @@ def login_ivasms():
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
     }
     try:
-        res = session.get(login_url, headers=headers, timeout=10)
+        res = session.get(login_url, headers=headers, timeout=12)
         soup = BeautifulSoup(res.text, 'html.parser')
         token_input = soup.find('input', {'name': '_token'})
         csrf_token = token_input['value'] if token_input else None
@@ -212,7 +227,7 @@ def login_ivasms():
         if csrf_token:
             payload["_token"] = csrf_token
             
-        post_res = session.post(login_url, data=payload, headers=headers, timeout=10)
+        post_res = session.post(login_url, data=payload, headers=headers, timeout=12)
         
         if "logout" in post_res.text.lower() or "dashboard" in post_res.text.lower() or "portal" in post_res.url or post_res.status_code in [200, 302]:
             return True
@@ -220,7 +235,9 @@ def login_ivasms():
         print(f"লগইন এরর: {e}")
     return False
 
+# সেলফ-হিলিং কুকি সেশন হ্যান্ডলার
 def get_session_page(url):
+    global session
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -228,17 +245,20 @@ def get_session_page(url):
     if cookie:
         headers["Cookie"] = cookie
         
-    try:
-        res = session.get(url, headers=headers, timeout=10)
-        if "login" in res.url or ("login" in res.text.lower() and "logout" not in res.text.lower()):
-            if not cookie:
-                print("সেশন শেষ! পুনরায় ব্যাকগ্রাউন্ড লগইন করা হচ্ছে...")
-                if login_ivasms():
-                    res = session.get(url, headers=headers, timeout=10)
-        return res
-    except Exception as e:
-        print(f"পেজ লোড করতে ত্রুটি: {e}")
-        return None
+    for attempt in range(2):
+        try:
+            res = session.get(url, headers=headers, timeout=12)
+            if "login" in res.url or ("login" in res.text.lower() and "logout" not in res.text.lower()):
+                if not cookie:
+                    print("সেশন শেষ! পুনরায় ব্যাকগ্রাউন্ড লগইন করা হচ্ছে...")
+                    if login_ivasms():
+                        res = session.get(url, headers=headers, timeout=12)
+            return res
+        except Exception as e:
+            print(f"পেজ লোড করতে ত্রুটি (চেষ্টা {attempt+1}): {e}")
+            session = create_safe_scraper()  # সেশন ক্র্যাশ করলে রিস্টার্ট করা হবে
+            time.sleep(2)
+    return None
 
 def fetch_ivasms_number(country_code=None):
     url = get_setting("number_url")
@@ -252,12 +272,10 @@ def fetch_ivasms_number(country_code=None):
         for row in rows:
             cols = [td.text.strip() for td in row.find_all('td')]
             if len(cols) > 1:
-                # যে কলামে নম্বর আছে সেটি সনাক্ত করা
                 for col in cols:
                     clean_num = col.replace('+', '').replace(' ', '').replace('-', '')
                     if clean_num.isdigit() and len(clean_num) >= 8:
                         row_text = row.text.lower()
-                        # যদি অ্যাডমিন কান্ট্রি অনুযায়ী ফিল্টার চায়
                         if country_code:
                             c_name = get_country_name(country_code).lower()
                             if country_code.lower() in row_text or c_name in row_text:
@@ -273,7 +291,6 @@ def poll_user_otp(chat_id, phone, selected_app):
     sms_url = get_setting("sms_url")
     if not sms_url: return
     
-    # ২ মিনিট পর্যন্ত ওটিপির জন্য অপেক্ষা করবে
     for _ in range(24):
         try:
             res = get_session_page(sms_url)
@@ -291,14 +308,9 @@ def poll_user_otp(chat_id, phone, selected_app):
                                        f"📞 নম্বর: `+{phone}`\n" \
                                        f"✉️ ওটিপি মেসেজ: {otp_message}"
                             
-                            # ১. ইউজারের ইনবক্সে যাবে
                             bot.send_message(chat_id, msg_text, parse_mode="Markdown")
-                            
-                            # ২. মেইন গ্রুপে যাবে
                             try: bot.send_message(int(get_setting("group_id")), msg_text, parse_mode="Markdown")
                             except: pass
-                            
-                            # ৩. চ্যানেলে যাবে
                             try: bot.send_message(int(get_setting("channel_id")), msg_text, parse_mode="Markdown")
                             except: pass
                             return
@@ -318,7 +330,7 @@ def live_sms_forwarder_thread():
                         soup = BeautifulSoup(res.text, 'html.parser')
                         rows = soup.find_all('tr')
                         
-                        conn = sqlite3.connect("bot_settings.db")
+                        conn = sqlite3.connect("bot_settings.db", timeout=30)
                         cursor = conn.cursor()
                         
                         for row in rows:
@@ -327,7 +339,6 @@ def live_sms_forwarder_thread():
                                 sid = cols[0]
                                 content = cols[-1]
                                 
-                                # মেসেজটির ডুপ্লিকেট রোধ করতে হ্যাশ কোড তৈরি
                                 sms_string = f"{sid}_{content}"
                                 sms_hash = hashlib.md5(sms_string.encode('utf-8')).hexdigest()
                                 
@@ -340,7 +351,6 @@ def live_sms_forwarder_thread():
                                                f"📞 প্রেরক/নম্বর: `{sid}`\n" \
                                                f"✉️ লাইভ এসএমএস: {content}"
                                                
-                                    # ডাইনামিক চ্যানেল ও গ্রুপে ফরোয়ার্ডিং
                                     try: bot.send_message(int(get_setting("channel_id")), msg_text, parse_mode="Markdown")
                                     except: pass
                                     try: bot.send_message(int(get_setting("group_id")), msg_text, parse_mode="Markdown")
@@ -349,7 +359,7 @@ def live_sms_forwarder_thread():
                         conn.close()
         except Exception as e:
             print(f"লাইভ এসএমএস ফরোয়ার্ডার ইঞ্জিনে ত্রুটি: {e}")
-        time.sleep(12)  # প্রতি ১২ সেকেন্ডে পোর্টাল স্ক্যান করবে
+        time.sleep(12)
 
 # ─── ভিজ্যুয়াল ড্যাশবোর্ড জেনারেটর ───
 def send_admin_dashboard(chat_id, message_id=None):
@@ -428,19 +438,19 @@ def handle_admin_steps(message):
         state = state_data["step"]
         
         if state == "email":
-            admin_states[message.chat.id]["email"] = message.text
+            admin_states[message.chat.id]["email"] = message.text.strip()
             bot.reply_to(message, "🔑 এবার আপনার IVASMS পাসওয়ার্ডটি দিন:")
             admin_states[message.chat.id]["step"] = "password"
             
         elif state == "password":
             email = admin_states[message.chat.id]["email"]
-            password = message.text
+            password = message.text.strip()
             set_setting("ivasms_email", email)
             set_setting("ivasms_password", password)
             status_msg = bot.reply_to(message, "⏳ IVASMS লগইন চেক করা হচ্ছে...")
             
             if login_ivasms():
-                set_setting("ivasms_cookie", "")  # অটো লগইন হলে ম্যানুয়াল কুকি বাতিল
+                set_setting("ivasms_cookie", "")
                 bot.send_message(message.chat.id, "✅ **লগইন সফল হয়েছে!**")
             else:
                 set_setting("ivasms_email", "")
@@ -450,7 +460,8 @@ def handle_admin_steps(message):
             del admin_states[message.chat.id]
             
         elif state == "cookie":
-            set_setting("ivasms_cookie", message.text)
+            clean_cookie = message.text.strip().replace("\n", "").replace("\r", "")
+            set_setting("ivasms_cookie", clean_cookie)
             set_setting("ivasms_email", "")
             set_setting("ivasms_password", "")
             bot.reply_to(message, "✅ **কুকি সেশন সেভ হয়েছে!**")
@@ -458,47 +469,47 @@ def handle_admin_steps(message):
             del admin_states[message.chat.id]
             
         elif state == "num_url":
-            set_setting("number_url", message.text)
+            set_setting("number_url", message.text.strip())
             bot.reply_to(message, "✅ **My Numbers URL সেট হয়েছে!**")
             send_admin_dashboard(message.chat.id)
             del admin_states[message.chat.id]
             
         elif state == "sms_url":
-            set_setting("sms_url", message.text)
+            set_setting("sms_url", message.text.strip())
             bot.reply_to(message, "✅ **Live SMS URL সেট হয়েছে!**")
             send_admin_dashboard(message.chat.id)
             del admin_states[message.chat.id]
             
         elif state == "c_id":
-            set_setting("channel_id", message.text)
+            set_setting("channel_id", message.text.strip())
             bot.reply_to(message, "🔗 এবার নতুন ওটিপি চ্যানেল লিংকটি দিন:")
             admin_states[message.chat.id]["step"] = "c_link"
             
         elif state == "c_link":
-            set_setting("channel_link", message.text)
+            set_setting("channel_link", message.text.strip())
             bot.reply_to(message, "✅ ওটিপি চ্যানেল এবং জয়েনিং লিংক আপডেট হয়েছে!")
             send_admin_dashboard(message.chat.id)
             del admin_states[message.chat.id]
             
         elif state == "g_id":
-            set_setting("group_id", message.text)
+            set_setting("group_id", message.text.strip())
             bot.reply_to(message, "🔗 এবার নতুন ওটিপি গ্রুপ লিংকটি দিন:")
             admin_states[message.chat.id]["step"] = "g_link"
             
         elif state == "g_link":
-            set_setting("group_link", message.text)
+            set_setting("group_link", message.text.strip())
             bot.reply_to(message, "✅ ওটিপি গ্রুপ এবং জয়েনিং লিংক আপডেট হয়েছে!")
             send_admin_dashboard(message.chat.id)
             del admin_states[message.chat.id]
             
         elif state == "add_fsub_id":
-            admin_states[message.chat.id]["fsub_id"] = message.text
+            admin_states[message.chat.id]["fsub_id"] = message.text.strip()
             bot.reply_to(message, "🔗 এবার সেই চ্যানেলটির জয়েনিং লিংক (Join Link) দিন:")
             admin_states[message.chat.id]["step"] = "add_fsub_link"
             
         elif state == "add_fsub_link":
             f_id = admin_states[message.chat.id]["fsub_id"]
-            f_link = message.text
+            f_link = message.text.strip()
             add_fsub_channel(f_id, f_link)
             bot.reply_to(message, "✅ নতুন সাবস্ক্রিপশন চ্যানেল সফলভাবে ড্যাশবোর্ডে যোগ করা হয়েছে!")
             send_admin_dashboard(message.chat.id)
@@ -590,7 +601,6 @@ def show_number_interface(call):
     try: bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=msg_text, reply_markup=markup, parse_mode="Markdown")
     except: bot.send_message(call.message.chat.id, msg_text, reply_markup=markup, parse_mode="Markdown")
     
-    # ইউজারের নির্দিষ্ট ওটিপি ট্র্যাকার ব্যাকগ্রাউন্ড থ্রেড চালু
     Thread(target=poll_user_otp, args=(call.message.chat.id, clean_phone, selected_app)).start()
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("fetch_"))
@@ -600,7 +610,6 @@ def manual_fetch_trigger(call):
     selected_app = data_parts[2]
     
     bot.answer_callback_query(call.id, text="🔍 ওটিপি কোড খোঁজা হচ্ছে...", show_alert=False)
-    # ১০ সেকেন্ড অপেক্ষা না করে ইনস্ট্যান্ট চেক
     poll_user_otp(call.message.chat.id, phone, selected_app)
 
 # অ্যাডমিন প্যানেল কলব্যাক কন্ট্রোলার
@@ -675,12 +684,14 @@ def handle_fsub_delete(call):
     send_admin_dashboard(call.message.chat.id, call.message.message_id)
 
 if __name__ == "__main__":
-    # ১. ফ্লাস্ক রানিং করা হলো
     keep_alive()
-    
-    # ২. স্বয়ংক্রিয় ব্যাকগ্রাউন্ড লাইভ ওটিপি ফরোয়ার্ডার থ্রেড চালু করা হলো
     Thread(target=live_sms_forwarder_thread, daemon=True).start()
-    
     print("🚀 প্রফেশনাল ওটিপি বট সফলভাবে লাইভ হয়েছে...")
-    try: bot.polling(none_stop=True, interval=0, timeout=20)
-    except Exception as e: print(f"বট রানিংয়ে সমস্যা: {e}")
+    
+    # ইনফিনিট পোলিং লুপ (সাময়িক ক্র্যাশেও বট বন্ধ হবে না)
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=0, timeout=25)
+        except Exception as e:
+            print(f"বট রানিংয়ে সাময়িক সমস্যা, ৫ সেকেন্ড পর অটো-রিস্টার্ট হচ্ছে: {e}")
+            time.sleep(5)
