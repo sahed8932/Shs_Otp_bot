@@ -14,8 +14,8 @@ from threading import Thread
 # ==================== CONFIGURATION ZONE ====================
 # এখানে আপনার বটের টোকেন, এপিআই কী এবং গ্রুপ আইডিগুলো পরিবর্তন করে নিন
 BOT_TOKEN = "8981181566:AAF7mng2by7JDKIJYc_7P9clBE3tINBWdkY"
-API_KEY = "MCZJ7C79228"                  # আপনার VoltX SMS API Key
-ADMIN_ID = 8262679678                   # আপনার অ্যাডমিন আইডি (মেসেজ আইডি)
+API_KEY = "MCZJ7C79228"                  # আপনার VoltX SMS API Key এখানে বসাবেন
+ADMIN_ID = 8262679678                   # আপনার অ্যাডমিন আইডি
 WHATSAPP_ONLY_GROUP = "-1002183552076"  # শুধুমাত্র হোয়াটসঅ্যাপ-এর ওটিপি পাঠানোর গ্রুপ আইডি
 ALL_SERVICES_GROUP = "-1003956226642"   # ফেসবুক ও অল সার্ভিস ওটিপি পাঠানোর গ্রুপ আইডি
 # ============================================================
@@ -40,35 +40,50 @@ def save_users(users_set):
         json.dump(list(users_set), f)
 
 def load_config():
+    # ফাইল থেকে পুরনো ডাটা লোড করার চেষ্টা করা হচ্ছে
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                cfg = json.load(f)
+        except:
+            cfg = {}
     else:
-        # ফাইল না থাকলে স্বয়ংক্রিয়ভাবে CONFIGURATION ZONE এর ডাটা দিয়ে তৈরি করে নেবে
-        default_config = {
-            "BOT_TOKEN": BOT_TOKEN, 
-            "FASTX_API_KEY": API_KEY, 
-            "BASE_URL": "https://api.2oo9.cloud/MXS47FLFX0U/tnevs/@public/api", # VoltX SMS Base URL
-            "ADMIN_ID": ADMIN_ID,
-            "BOT_NAME": "Quick X SMS BOT", 
-            "BOT_USERNAME": "SHS_SMSHUB_bot", 
-            "DEV_USERNAME": "Saku_143",
-            "WHATSAPP_ONLY_GROUP": WHATSAPP_ONLY_GROUP,
-            "ALL_SERVICES_GROUP": ALL_SERVICES_GROUP,
-            "RANGE_GROUP_LINK": "https://t.me/SHS_Otp_Channel",
-            "SUPPORT_LINK": "https://t.me/Saku_143",
-            "CHANNELS_TO_JOIN": [
-                {"id": "-1003956226642", "link": "https://t.me/SHS_Otp_Channel", "name": "📢 Otp Channel"},
-                {"id": "-1002183552076", "link": "https://t.me/winfanti", "name": "💬 Support Channel"}
-            ],
-            "GROUPS_TO_JOIN": [
-                {"id": "-1004309875319", "link": "https://t.me/+DXdDIm7-rRU4YTQ1", "name": "👥 OTP Support Group"}
-            ],
-            "NOTICE": "⚠️ সার্ভিসটি ফুল স্পিডে সচল রয়েছে। কোনো সমস্যা হলে গ্রুপে জানান।"
-        }
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(default_config, f, indent=4)
-        return default_config
+        cfg = {}
+
+    # CONFIGURATION ZONE-এর ডাটা দিয়ে সবসময় ক্যাশ আপডেট করা হবে (নতুন এডিট কার্যকর করার জন্য)
+    cfg["BOT_TOKEN"] = BOT_TOKEN
+    cfg["FASTX_API_KEY"] = API_KEY
+    cfg["ADMIN_ID"] = ADMIN_ID
+    cfg["WHATSAPP_ONLY_GROUP"] = WHATSAPP_ONLY_GROUP
+    cfg["ALL_SERVICES_GROUP"] = ALL_SERVICES_GROUP
+    
+    # অন্যান্য ডিফল্ট প্যারামিটার সেট করা হচ্ছে
+    if "BASE_URL" not in cfg:
+        cfg["BASE_URL"] = "https://api.2oo9.cloud/MXS47FLFX0U/tnevs/@public/api"
+    if "BOT_NAME" not in cfg:
+        cfg["BOT_NAME"] = "Quick X SMS BOT"
+    if "BOT_USERNAME" not in cfg:
+        cfg["BOT_USERNAME"] = "SHS_SMSHUB_bot"
+    if "DEV_USERNAME" not in cfg:
+        cfg["DEV_USERNAME"] = "Saku_143"
+    if "RANGE_GROUP_LINK" not in cfg:
+        cfg["RANGE_GROUP_LINK"] = "https://t.me/SHS_Otp_Channel"
+    if "SUPPORT_LINK" not in cfg:
+        cfg["SUPPORT_LINK"] = "https://t.me/Saku_143"
+    if "CHANNELS_TO_JOIN" not in cfg:
+        cfg["CHANNELS_TO_JOIN"] = [
+            {"id": "-1003956226642", "link": "https://t.me/SHS_Otp_Channel", "name": "📢 Otp Channel"},
+            {"id": "-1002183552076", "link": "https://t.me/winfanti", "name": "💬 Support Channel"}
+        ]
+    if "GROUPS_TO_JOIN" not in cfg:
+        cfg["GROUPS_TO_JOIN"] = [
+            {"id": "-1004309875319", "link": "https://t.me/+DXdDIm7-rRU4YTQ1", "name": "👥 OTP Support Group"}
+        ]
+    if "NOTICE" not in cfg:
+        cfg["NOTICE"] = "⚠️ সার্ভিসটি ফুল স্পিডে সচল রয়েছে। কোনো সমস্যা হলে গ্রুপে জানান।"
+
+    save_config(cfg)
+    return cfg
 
 def save_config(config_data):
     with open(CONFIG_FILE, "w") as f:
@@ -107,6 +122,27 @@ def is_subscribed_all(user_id):
 
 def get_api_headers():
     return {"mauthapi": str(config.get("FASTX_API_KEY", "")).strip()}
+
+def safe_int(val):
+    try:
+        return int(str(val).strip())
+    except:
+        return None
+
+def parse_api_data(res_json):
+    """
+    প্যানেল থেকে আগত এপিআই ডাটা ডিকশনারি বা সরাসরি লিস্ট আকারে থাকলেও তা ক্র্যাশ না করে নিরাপদে এক্সট্রাক্ট করবে
+    """
+    data_obj = res_json.get("data")
+    if not data_obj:
+        return []
+    if isinstance(data_obj, list):
+        return data_obj
+    if isinstance(data_obj, dict):
+        for k, v in data_obj.items():
+            if isinstance(v, list):
+                return v
+    return []
 
 def send_home_keyboard(chat_id, text=None):
     track_user(chat_id)
@@ -298,7 +334,7 @@ def check_and_send_user_otp(chat_id, range_id, num):
             
         res = response.json()
         if res.get("meta", {}).get("status") == "ok":
-            otps_list = res.get("data", [])
+            otps_list = parse_api_data(res)
             clean_num = str(num).replace("+", "").strip()
             
             found_item = None
@@ -311,9 +347,20 @@ def check_and_send_user_otp(chat_id, range_id, num):
             if found_item:
                 otp_code = found_item.get("otp") or found_item.get("code")
                 msg_body = found_item.get("message") or found_item.get("sms") or ""
-                service = found_item.get("service") or found_item.get("platform") or "Unknown"
+                service = found_item.get("service") or found_item.get("platform") or found_item.get("sid") or "Unknown"
                 country = found_item.get("country", "Global")
-                time_val = found_item.get("time") or datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                time_val = found_item.get("time")
+                
+                # যদি টাইমস্ট্যাম্প Epoch হয় তবে রিডেবল ফরম্যাটে কনভার্ট করবে
+                if isinstance(time_val, (int, float)):
+                    if time_val > 5000000000:
+                        time_val = time_val / 1000
+                    try:
+                        time_str = datetime.fromtimestamp(time_val).strftime("%Y-%m-%d %I:%M:%S %p")
+                    except:
+                        time_str = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                else:
+                    time_str = str(time_val) if time_val else datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
                 
                 if not otp_code:
                     code_match = re.search(r'\b\d{4,8}\b', msg_body)
@@ -324,7 +371,7 @@ def check_and_send_user_otp(chat_id, range_id, num):
                     country=country,
                     key_code=otp_code,
                     range_id=range_id,
-                    time_str=time_val,
+                    time_str=time_str,
                     message_body=msg_body
                 )
                 
@@ -354,14 +401,14 @@ def check_and_send_user_otp(chat_id, range_id, num):
                     )
                     
                     if "whatsapp" in service_lower:
-                        dest_group_id = config.get("WHATSAPP_ONLY_GROUP")
+                        dest_group_id = safe_int(config.get("WHATSAPP_ONLY_GROUP"))
                         if dest_group_id:
-                            try: bot.send_message(int(dest_group_id), formatted_card, reply_markup=group_markup, parse_mode="Markdown")
+                            try: bot.send_message(dest_group_id, formatted_card, reply_markup=group_markup, parse_mode="Markdown")
                             except: pass
                     else:
-                        dest_group_id = config.get("ALL_SERVICES_GROUP")
+                        dest_group_id = safe_int(config.get("ALL_SERVICES_GROUP"))
                         if dest_group_id:
-                            try: bot.send_message(int(dest_group_id), formatted_card, reply_markup=group_markup, parse_mode="Markdown")
+                            try: bot.send_message(dest_group_id, formatted_card, reply_markup=group_markup, parse_mode="Markdown")
                             except: pass
                 
                 return True
@@ -397,14 +444,14 @@ def callback_view_live_access(call):
         response = requests.get(url, headers=get_api_headers(), timeout=15)
         res = response.json()
         if res.get("meta", {}).get("status") == "ok":
-            data_list = res.get("data", [])
+            data_list = parse_api_data(res)
             if not data_list:
                 bot.send_message(call.message.chat.id, "📊 **বর্তমানে কোনো অ্যাক্টিভ রেঞ্জ পাওয়া যায়নি।**", parse_mode="Markdown")
                 return
             
             msg = "📊 **Active Ranges & Live Access:**\n\n"
             for item in data_list:
-                service = item.get("service", "Unknown").upper()
+                service = (item.get("service") or item.get("platform") or item.get("sid") or "Unknown").upper()
                 ranges = item.get("ranges", [])
                 ranges_str = ", ".join([f"`{r}`" for r in ranges])
                 msg += f"📱 **{service}** ➔ {ranges_str}\n"
@@ -453,7 +500,7 @@ def background_live_sms_monitor():
                 
             res = response.json()
             if res.get("meta", {}).get("status") == "ok":
-                otps_list = res.get("data", [])
+                otps_list = parse_api_data(res)
                 if not isinstance(otps_list, list):
                     continue
                 
@@ -463,10 +510,21 @@ def background_live_sms_monitor():
                     num = item.get("number")
                     otp_code = item.get("otp") or item.get("code")
                     msg_body = item.get("message") or item.get("sms") or ""
-                    service = item.get("service") or item.get("platform") or "unknown"
+                    service = item.get("service") or item.get("platform") or item.get("sid") or "unknown"
                     country = item.get("country", "Global")
                     range_id = item.get("range", "N/A")
-                    time_val = item.get("time") or datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                    time_val = item.get("time")
+                    
+                    # Epoch কনভার্ট
+                    if isinstance(time_val, (int, float)):
+                        if time_val > 5000000000:
+                            time_val = time_val / 1000
+                        try:
+                            time_str = datetime.fromtimestamp(time_val).strftime("%Y-%m-%d %I:%M:%S %p")
+                        except:
+                            time_str = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+                    else:
+                        time_str = str(time_val) if time_val else datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
                     
                     if not num or not msg_body:
                         continue
@@ -487,7 +545,7 @@ def background_live_sms_monitor():
                         country=country,
                         key_code=otp_code,
                         range_id=range_id,
-                        time_str=time_val,
+                        time_str=time_str,
                         message_body=msg_body
                     )
                     
@@ -505,17 +563,17 @@ def background_live_sms_monitor():
                     
                     # ডুয়াল ফরওয়ার্ডিং সিস্টেম (গ্রুপে ভাগ করা)
                     if "whatsapp" in service_lower:
-                        dest_group_id = config.get("WHATSAPP_ONLY_GROUP")
+                        dest_group_id = safe_int(config.get("WHATSAPP_ONLY_GROUP"))
                         if dest_group_id:
                             try:
-                                bot.send_message(int(dest_group_id), formatted_card, reply_markup=markup, parse_mode="Markdown")
+                                bot.send_message(dest_group_id, formatted_card, reply_markup=markup, parse_mode="Markdown")
                             except Exception as ex:
                                 print(f"WhatsApp forward error: {ex}")
                     else:
-                        dest_group_id = config.get("ALL_SERVICES_GROUP")
+                        dest_group_id = safe_int(config.get("ALL_SERVICES_GROUP"))
                         if dest_group_id:
                             try:
-                                bot.send_message(int(dest_group_id), formatted_card, reply_markup=markup, parse_mode="Markdown")
+                                bot.send_message(dest_group_id, formatted_card, reply_markup=markup, parse_mode="Markdown")
                             except Exception as ex:
                                 print(f"All services forward error: {ex}")
                                 
@@ -717,5 +775,5 @@ if __name__ == "__main__":
     
     try: bot.delete_webhook(drop_pending_updates=True)
     except: pass
-    print("🚀 Quick X SMS BOT সফলভাবে রান হচ্ছে...")
+    print("🚀 Volt X SMS BOT সফলভাবে রান হচ্ছে...")
     bot.polling(none_stop=True)
