@@ -14,7 +14,7 @@ from threading import Thread
 # ==================== CONFIGURATION ZONE ====================
 # এখানে আপনার বটের টোকেন, এপিআই কী এবং গ্রুপ আইডিগুলো পরিবর্তন করে নিন
 BOT_TOKEN = "8981181566:AAF7mng2by7JDKIJYc_7P9clBE3tINBWdkY"
-API_KEY = "ABCDXXXXXXX"                  # আপনার VoltX SMS API Key
+API_KEY = "MCZJ7C79228"                  # আপনার VoltX SMS API Key
 ADMIN_ID = 8262679678                   # আপনার অ্যাডমিন আইডি (মেসেজ আইডি)
 WHATSAPP_ONLY_GROUP = "-1002183552076"  # শুধুমাত্র হোয়াটসঅ্যাপ-এর ওটিপি পাঠানোর গ্রুপ আইডি
 ALL_SERVICES_GROUP = "-1003956226642"   # ফেসবুক ও অল সার্ভিস ওটিপি পাঠানোর গ্রুপ আইডি
