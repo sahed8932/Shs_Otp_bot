@@ -16,8 +16,8 @@ from threading import Thread
 BOT_TOKEN = "8981181566:AAF7mng2by7JDKIJYc_7P9clBE3tINBWdkY"
 API_KEY = "MCZJ7C79228"                  # আপনার VoltX SMS API Key এখানে বসাবেন
 ADMIN_ID = 8262679678                   # আপনার অ্যাডমিন আইডি
-WHATSAPP_ONLY_GROUP = "-1002183552076"  # শুধুমাত্র হোয়াটসঅ্যাপ-এর ওটিপি পাঠানোর গ্রুপ আইডি
-ALL_SERVICES_GROUP = "-1003956226642"   # ফেসবুক ও অল সার্ভিস ওটিপি পাঠানোর গ্রুপ আইডি
+WHATSAPP_ONLY_GROUP = "-1003956226642"  # শুধুমাত্র হোয়াটসঅ্যাপ-এর ওটিপি পাঠানোর গ্রুপ আইডি
+ALL_SERVICES_GROUP = "-1004309875319"   # ফেসবুক ও অল সার্ভিস ওটিপি পাঠানোর গ্রুপ আইডি
 # ============================================================
 
 CONFIG_FILE = "config.json"
@@ -61,9 +61,9 @@ def load_config():
     if "BASE_URL" not in cfg:
         cfg["BASE_URL"] = "https://api.2oo9.cloud/MXS47FLFX0U/tnevs/@public/api"
     if "BOT_NAME" not in cfg:
-        cfg["BOT_NAME"] = "Quick X SMS BOT"
+        cfg["BOT_NAME"] = "Volt X SMS BOT"
     if "BOT_USERNAME" not in cfg:
-        cfg["BOT_USERNAME"] = "SHS_SMSHUB_bot"
+        cfg["BOT_USERNAME"] = "ShsOtp_bot"
     if "DEV_USERNAME" not in cfg:
         cfg["DEV_USERNAME"] = "Saku_143"
     if "RANGE_GROUP_LINK" not in cfg:
