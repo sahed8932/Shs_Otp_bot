@@ -11,6 +11,7 @@ import string
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+from telegram.request import HTTPXRequest  # <--- এই নতুন লাইনটি সবার নিচে যোগ করে দিন
 #=========
 
 # ==================== CONFIG SECTION ===========
