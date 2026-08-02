@@ -160,7 +160,8 @@ T_LANG = ["🌐 LANGUAGE", "🌐 ভাষা পরিবর্তন"]
 T_ADMIN = ["⚙️ ADMIN PANEL ⚙️", "⚙️ অ্যাডমিন প্যানেল ⚙️"]
 T_CANCEL = ["🛑 CANCEL", "🛑 বাতিল", "🛑 ABORT"]
 
-request_queue = asyncio.Queue()
+request_queue = None
+client_async = None
 MAX_WORKERS = 5000
 
 client_async = httpx.AsyncClient(
@@ -2487,6 +2488,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================== MAIN CORE MODULES ====================
 
 async def post_init(application):
+    global request_queue, client_async
+    request_queue = asyncio.Queue()
+    client_async = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0),
+        headers={"X-API-Key": API_KEY},
+        limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200)
+    )
+    
     for _ in range(20):
         asyncio.create_task(worker())
     asyncio.create_task(monitor_loop(application))
