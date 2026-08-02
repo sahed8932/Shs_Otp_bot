@@ -11,10 +11,10 @@ import string
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+=========
 
-# ==================== CONFIG SECTION ====================
-
-BOT_TOKEN = "8979736100:AAG_8ILyTgjuWxpSG1v2kgdRWv4nCPeycws"
+# ==================== CONFIG SECTION ===========
+BOT_TOKEN = "8472900647:AAFfQACvZ2TS1DylG38lB9DiV75I1cU3Gv8"
 API_KEY = "MCZJ7C79228"
 BASE_URL = "https://api.2oo9.cloud/MXS47FLFX0U/tnevs/@public/api"
 USER_DATA_FILE = "users.json"
@@ -36,7 +36,7 @@ def _get_h_lnk():
     return p1 + p2 + p3
 
 # ==================== MULTIPLE ADMINS CONFIGURATION ====================
-ADMINS = [7808485930]
+ADMINS = [8262679678]
 OTP_GROUP_ID = -1003956226642
 
 # ==================== OTP RATE & VALUATION ====================
