@@ -2492,7 +2492,15 @@ async def post_init(application):
     asyncio.create_task(liveaccess_refresh_loop())
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).post_init(post_init).build()
+    # টেলিগ্রাম সার্ভার টাইমআউট সমাধান
+    request_config = HTTPXRequest(
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=30.0
+    )
+
+    app = ApplicationBuilder().token(BOT_TOKEN).request(request_config).concurrent_updates(True).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("get1number", get1number_command))
@@ -2505,6 +2513,6 @@ def main():
 
     print("🚀 BOT RUNNING...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-
+    
 if __name__ == "__main__":
     main()
